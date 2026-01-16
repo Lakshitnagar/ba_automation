@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import datetime as dt
+import json
 import re
 from pathlib import Path
 
@@ -21,7 +22,9 @@ except Exception as exc:  # pragma: no cover - best-effort import
     ) from exc
 
 LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)")
+NPM_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
+NPM_URL = "https://registry.npmjs.org/{name}"
 EXCLUDED_PACKAGES = {
     "colorlog",
     "django-extensions",
@@ -43,6 +46,29 @@ def parse_pip_file(path: Path) -> list[tuple[str, str]]:
         name, version = match.group(1), match.group(2)
         items.append((name, version))
     return items
+
+
+def parse_package_json(path: Path) -> list[tuple[str, str]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    items: list[tuple[str, str]] = []
+    deps = data.get("dependencies", {})
+    if not isinstance(deps, dict):
+        return items
+    for name, spec in deps.items():
+        if not isinstance(spec, str):
+            continue
+        if name.startswith("@angular/"):
+            continue
+        items.append((name, spec))
+    return items
+
+
+def extract_npm_version(spec: str) -> str | None:
+    match = NPM_VERSION_RE.search(spec)
+    return match.group(1) if match else None
 
 
 def get_release_date(releases: dict, version: str) -> dt.date | None:
@@ -119,9 +145,55 @@ def fetch_pypi(name: str, session: requests.Session, cache: dict) -> dict | None
         return None
 
 
+def fetch_npm(name: str, session: requests.Session, cache: dict) -> dict | None:
+    if name in cache:
+        return cache[name]
+    try:
+        encoded = requests.utils.quote(name, safe="@/")
+        resp = session.get(NPM_URL.format(name=encoded), timeout=20)
+        if resp.status_code != 200:
+            cache[name] = None
+            return None
+        cache[name] = resp.json()
+        return cache[name]
+    except requests.RequestException:
+        cache[name] = None
+        return None
+
+
+def get_npm_release_date(time_map: dict, version: str) -> dt.date | None:
+    if not version:
+        return None
+    ts = time_map.get(version)
+    if not ts:
+        return None
+    try:
+        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def get_npm_latest_version(data: dict) -> str | None:
+    dist_tags = data.get("dist-tags", {}) if isinstance(data, dict) else {}
+    latest = dist_tags.get("latest")
+    if not vparse:
+        return latest if isinstance(latest, str) else None
+    if isinstance(latest, str) and is_stable_version(latest):
+        return latest
+    time_map = data.get("time", {}) if isinstance(data, dict) else {}
+    versions = [
+        v
+        for v in time_map.keys()
+        if v not in ("created", "modified") and is_stable_version(v)
+    ]
+    if not versions:
+        return None
+    return str(max(versions, key=vparse))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate an Excel report comparing pinned versions to latest PyPI releases."
+        description="Generate an Excel report comparing pinned versions to latest PyPI/NPM releases."
     )
     parser.add_argument(
         "--root",
@@ -137,22 +209,28 @@ def main() -> int:
 
     root = Path(args.root).resolve()
     pip_files = list(root.rglob("*.pip"))
-    if not pip_files:
-        print(f"No .pip files found under {root}")
+    npm_files = list(root.rglob("package.json"))
+    if not pip_files and not npm_files:
+        print(f"No .pip or package.json files found under {root}")
         return 1
 
-    grouped: dict[str, list[tuple[str, str]]] = {}
+    grouped: dict[str, list[tuple[str, str, str]]] = {}
     for path in pip_files:
         folder = path.parent.name or path.parent.as_posix()
         grouped.setdefault(folder, [])
-        grouped[folder].extend(parse_pip_file(path))
+        grouped[folder].extend((name, version, "pypi") for name, version in parse_pip_file(path))
+    for path in npm_files:
+        folder = path.parent.name or path.parent.as_posix()
+        grouped.setdefault(folder, [])
+        grouped[folder].extend((name, version, "npm") for name, version in parse_package_json(path))
 
     wb = Workbook()
     wb.remove(wb.active)
 
     session = requests.Session()
     session.headers.update({"User-Agent": "pip-release-report/1.0"})
-    cache: dict[str, dict | None] = {}
+    pypi_cache: dict[str, dict | None] = {}
+    npm_cache: dict[str, dict | None] = {}
 
     headers = [
         "package",
@@ -185,24 +263,36 @@ def main() -> int:
             cell.font = header_font
             cell.alignment = header_alignment
         rows: list[list] = []
-        for name, current_version in items:
+        for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
-            data = fetch_pypi(name, session, cache)
-            if not data:
-                rows.append([name, current_version, None, None, None, None, None])
-                continue
+            if ecosystem == "pypi":
+                data = fetch_pypi(name, session, pypi_cache)
+                if not data:
+                    rows.append([name, current_version, None, None, None, None, None])
+                    continue
 
-            info = data.get("info", {})
-            releases = data.get("releases", {})
-            current_date = get_release_date(releases, current_version)
-            if name.lower() == "django":
-                latest_version = get_latest_version_same_major(releases, current_version)
-                if not latest_version:
+                info = data.get("info", {})
+                releases = data.get("releases", {})
+                current_date = get_release_date(releases, current_version)
+                if name.lower() == "django":
+                    latest_version = get_latest_version_same_major(releases, current_version)
+                    if not latest_version:
+                        latest_version = get_latest_version(info, releases)
+                else:
                     latest_version = get_latest_version(info, releases)
+                latest_date = get_release_date(releases, latest_version) if latest_version else None
             else:
-                latest_version = get_latest_version(info, releases)
-            latest_date = get_release_date(releases, latest_version) if latest_version else None
+                data = fetch_npm(name, session, npm_cache)
+                if not data:
+                    rows.append([name, current_version, None, None, None, None, None])
+                    continue
+
+                time_map = data.get("time", {})
+                current_resolved = extract_npm_version(current_version)
+                current_date = get_npm_release_date(time_map, current_resolved)
+                latest_version = get_npm_latest_version(data)
+                latest_date = get_npm_release_date(time_map, latest_version)
 
             days_diff = None
             if current_date and latest_date:
