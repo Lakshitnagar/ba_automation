@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - best-effort import
 
 try:
     from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
 except Exception as exc:  # pragma: no cover - best-effort import
     raise SystemExit(
         "openpyxl is required to write the Excel file. "
@@ -21,6 +22,13 @@ except Exception as exc:  # pragma: no cover - best-effort import
 
 LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)")
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
+EXCLUDED_PACKAGES = {
+    "colorlog",
+    "django-extensions",
+    "redis",
+    "setuptools",
+    "wheel",
+}
 
 
 def parse_pip_file(path: Path) -> list[tuple[str, str]]:
@@ -53,16 +61,42 @@ def get_release_date(releases: dict, version: str) -> dt.date | None:
     return min(dates).date()
 
 
-def get_latest_version(info: dict, releases: dict) -> str | None:
-    latest = info.get("version")
-    if latest:
-        return latest
+def is_stable_version(version: str) -> bool:
     if not vparse:
-        return None
-    versions = [v for v in releases.keys() if v]
+        return False
+    parsed = vparse(version)
+    # Exclude pre, post, dev, and local versions
+    return not (parsed.is_prerelease or parsed.is_postrelease or parsed.is_devrelease or parsed.local)
+
+
+def get_latest_version(info: dict, releases: dict) -> str | None:
+    if not vparse:
+        return info.get("version")
+    versions = [v for v in releases.keys() if v and is_stable_version(v)]
     if not versions:
         return None
     return str(max(versions, key=vparse))
+
+
+def get_latest_version_same_major(
+    releases: dict, current_version: str
+) -> str | None:
+    if not vparse:
+        return None
+    try:
+        current_major = vparse(current_version).release[0]
+    except Exception:
+        return None
+    candidates = []
+    for version in releases.keys():
+        if not version or not is_stable_version(version):
+            continue
+        parsed = vparse(version)
+        if parsed.release and parsed.release[0] == current_major:
+            candidates.append(version)
+    if not candidates:
+        return None
+    return str(max(candidates, key=vparse))
 
 
 def sanitize_sheet_name(name: str) -> str:
@@ -127,37 +161,98 @@ def main() -> int:
         "latest_version",
         "latest_release_date",
         "days_difference",
+        "days_since_latest_release",
     ]
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(color="FFFFFF", bold=True, size=16)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    body_font = Font(size=14)
+    body_alignment = Alignment(horizontal="center", vertical="center")
+    package_alignment = Alignment(horizontal="left", vertical="center")
+    even_fill = PatternFill("solid", fgColor="F2F6FA")
+    odd_fill = PatternFill("solid", fgColor="FFFFFF")
+    alert_fill = PatternFill("solid", fgColor="F8D7DA")
+    warning_fill = PatternFill("solid", fgColor="FFF3CD")
+    alert_threshold_days = 2 * 365 - 62
 
+    today = dt.date.today()
     for folder, items in sorted(grouped.items()):
         ws = wb.create_sheet(title=sanitize_sheet_name(folder))
         ws.append(headers)
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        rows: list[list] = []
         for name, current_version in items:
+            if name.lower() in EXCLUDED_PACKAGES:
+                continue
             data = fetch_pypi(name, session, cache)
             if not data:
-                ws.append([name, current_version, None, None, None, None])
+                rows.append([name, current_version, None, None, None, None, None])
                 continue
 
             info = data.get("info", {})
             releases = data.get("releases", {})
             current_date = get_release_date(releases, current_version)
-            latest_version = get_latest_version(info, releases)
+            if name.lower() == "django":
+                latest_version = get_latest_version_same_major(releases, current_version)
+                if not latest_version:
+                    latest_version = get_latest_version(info, releases)
+            else:
+                latest_version = get_latest_version(info, releases)
             latest_date = get_release_date(releases, latest_version) if latest_version else None
 
             days_diff = None
             if current_date and latest_date:
                 days_diff = (latest_date - current_date).days
+            days_since_latest = None
+            if latest_date:
+                days_since_latest = (today - latest_date).days
 
-            ws.append(
+            rows.append(
                 [
                     name,
                     current_version,
-                    current_date.isoformat() if current_date else None,
+                    current_date if current_date else None,
                     latest_version,
-                    latest_date.isoformat() if latest_date else None,
+                    latest_date if latest_date else None,
                     days_diff,
+                    days_since_latest,
                 ]
             )
+        rows.sort(
+            key=lambda r: (r[5] is None, r[5] if r[5] is not None else -1),
+            reverse=True,
+        )
+        for row in rows:
+            ws.append(row)
+        for row in range(2, ws.max_row + 1):
+            days_value = ws.cell(row=row, column=6).value
+            if isinstance(days_value, int) and days_value > alert_threshold_days:
+                fill = alert_fill
+            else:
+                fill = even_fill if row % 2 == 0 else odd_fill
+            for col in range(1, len(headers) + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.fill = fill
+                cell.font = body_font
+                cell.alignment = package_alignment if col == 1 else body_alignment
+                if col in (3, 5) and cell.value:
+                    cell.number_format = "DD-MMM-YYYY"
+                if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                    cell.fill = warning_fill
+        for col in range(1, len(headers) + 1):
+            max_len = 0
+            for row in range(1, ws.max_row + 1):
+                value = ws.cell(row=row, column=col).value
+                if value is None:
+                    continue
+                max_len = max(max_len, len(str(value)))
+            header_len = len(str(headers[col - 1]))
+            width = max(max_len + 2, int(header_len * 1.25) + 4)
+            ws.column_dimensions[chr(64 + col)].width = width
 
     wb.save(args.output)
     print(f"Wrote {args.output}")
