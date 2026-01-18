@@ -368,41 +368,47 @@ def main() -> int:
             width = max(max_len + 2, int(header_len * 1.25) + 4)
             ws.column_dimensions[chr(64 + col)].width = width
 
-    if flagged_by_section:
-        summary_headers = ["section", *headers]
-        summary_ws = wb.create_sheet(title="Summary")
-        summary_ws.append(summary_headers)
+    summary_headers = ["section", *headers]
+    summary_ws = wb.create_sheet(title="Summary")
+    summary_ws.append(summary_headers)
+    for col in range(1, len(summary_headers) + 1):
+        cell = summary_ws.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    for section in summary_sections:
+        for row in flagged_by_section.get(section, []):
+            summary_ws.append([section, *row])
+
+    for row in range(2, summary_ws.max_row + 1):
         for col in range(1, len(summary_headers) + 1):
-            cell = summary_ws.cell(row=1, column=col)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = header_alignment
+            cell = summary_ws.cell(row=row, column=col)
+            cell.fill = alert_fill
+            cell.font = body_font
+            cell.alignment = package_alignment if col == 2 else body_alignment
+            if col in (4, 6) and cell.value:
+                cell.number_format = "DD-MMM-YYYY"
+            if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                cell.fill = warning_fill
 
-        for section in summary_sections:
-            for row in flagged_by_section.get(section, []):
-                summary_ws.append([section, *row])
+    for col in range(1, len(summary_headers) + 1):
+        max_len = 0
+        for row in range(1, summary_ws.max_row + 1):
+            value = summary_ws.cell(row=row, column=col).value
+            if value is None:
+                continue
+            max_len = max(max_len, len(str(value)))
+        header_len = len(str(summary_headers[col - 1]))
+        width = max(max_len + 2, int(header_len * 1.25) + 4)
+        summary_ws.column_dimensions[chr(64 + col)].width = width
 
-        for row in range(2, summary_ws.max_row + 1):
-            for col in range(1, len(summary_headers) + 1):
-                cell = summary_ws.cell(row=row, column=col)
-                cell.fill = alert_fill
-                cell.font = body_font
-                cell.alignment = package_alignment if col == 2 else body_alignment
-                if col in (4, 6) and cell.value:
-                    cell.number_format = "DD-MMM-YYYY"
-                if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
-                    cell.fill = warning_fill
-
-        for col in range(1, len(summary_headers) + 1):
-            max_len = 0
-            for row in range(1, summary_ws.max_row + 1):
-                value = summary_ws.cell(row=row, column=col).value
-                if value is None:
-                    continue
-                max_len = max(max_len, len(str(value)))
-            header_len = len(str(summary_headers[col - 1]))
-            width = max(max_len + 2, int(header_len * 1.25) + 4)
-            summary_ws.column_dimensions[chr(64 + col)].width = width
+    desired_order = ["Summary", "tipcms", "sources", "collection"]
+    name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
+    wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
+    wb._sheets.extend(
+        sheet for sheet in wb.worksheets if sheet.title not in desired_order
+    )
 
     wb.save(args.output)
     print(f"Wrote {args.output}")
