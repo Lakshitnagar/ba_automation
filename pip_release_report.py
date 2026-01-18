@@ -242,6 +242,8 @@ def main() -> int:
         "days_since_latest_release",
         "days_since_current_release",
     ]
+    summary_sections = ("sources", "tipcms", "collection")
+    flagged_by_section: dict[str, list[list]] = {}
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True, size=16)
     header_alignment = Alignment(horizontal="center", vertical="center")
@@ -263,14 +265,16 @@ def main() -> int:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = header_alignment
-        rows: list[list] = []
+        rows_info: list[tuple[list, bool]] = []
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
             if ecosystem == "pypi":
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
-                    rows.append([name, current_version, None, None, None, None, None, None])
+                    rows_info.append(
+                        ([name, current_version, None, None, None, None, None, None], False)
+                    )
                     continue
 
                 info = data.get("info", {})
@@ -286,7 +290,9 @@ def main() -> int:
             else:
                 data = fetch_npm(name, session, npm_cache)
                 if not data:
-                    rows.append([name, current_version, None, None, None, None, None, None])
+                    rows_info.append(
+                        ([name, current_version, None, None, None, None, None, None], False)
+                    )
                     continue
 
                 time_map = data.get("time", {})
@@ -305,24 +311,31 @@ def main() -> int:
             if current_date:
                 days_since_current = (today - current_date).days
 
-            rows.append(
-                [
-                    name,
-                    current_version,
-                    current_date if current_date else None,
-                    latest_version,
-                    latest_date if latest_date else None,
-                    days_diff,
-                    days_since_latest,
-                    days_since_current,
-                ]
+            row = [
+                name,
+                current_version,
+                current_date if current_date else None,
+                latest_version,
+                latest_date if latest_date else None,
+                days_diff,
+                days_since_latest,
+                days_since_current,
+            ]
+            is_alert = (
+                isinstance(days_since_current, int)
+                and days_since_current > alert_threshold_days
+                and isinstance(days_diff, int)
+                and days_diff > 0
             )
-        rows.sort(
-            key=lambda r: (r[7] is None, r[7] if r[7] is not None else -1),
+            rows_info.append((row, is_alert))
+        rows_info.sort(
+            key=lambda r: (r[0][7] is None, r[0][7] if r[0][7] is not None else -1),
             reverse=True,
         )
-        for row in rows:
+        for row, is_alert in rows_info:
             ws.append(row)
+            if is_alert and folder in summary_sections:
+                flagged_by_section.setdefault(folder, []).append(row)
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -354,6 +367,42 @@ def main() -> int:
             header_len = len(str(headers[col - 1]))
             width = max(max_len + 2, int(header_len * 1.25) + 4)
             ws.column_dimensions[chr(64 + col)].width = width
+
+    if flagged_by_section:
+        summary_headers = ["section", *headers]
+        summary_ws = wb.create_sheet(title="Summary")
+        summary_ws.append(summary_headers)
+        for col in range(1, len(summary_headers) + 1):
+            cell = summary_ws.cell(row=1, column=col)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+
+        for section in summary_sections:
+            for row in flagged_by_section.get(section, []):
+                summary_ws.append([section, *row])
+
+        for row in range(2, summary_ws.max_row + 1):
+            for col in range(1, len(summary_headers) + 1):
+                cell = summary_ws.cell(row=row, column=col)
+                cell.fill = alert_fill
+                cell.font = body_font
+                cell.alignment = package_alignment if col == 2 else body_alignment
+                if col in (4, 6) and cell.value:
+                    cell.number_format = "DD-MMM-YYYY"
+                if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                    cell.fill = warning_fill
+
+        for col in range(1, len(summary_headers) + 1):
+            max_len = 0
+            for row in range(1, summary_ws.max_row + 1):
+                value = summary_ws.cell(row=row, column=col).value
+                if value is None:
+                    continue
+                max_len = max(max_len, len(str(value)))
+            header_len = len(str(summary_headers[col - 1]))
+            width = max(max_len + 2, int(header_len * 1.25) + 4)
+            summary_ws.column_dimensions[chr(64 + col)].width = width
 
     wb.save(args.output)
     print(f"Wrote {args.output}")
