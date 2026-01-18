@@ -240,6 +240,7 @@ def main() -> int:
         "latest_release_date",
         "days_difference",
         "days_since_latest_release",
+        "days_since_current_release",
     ]
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True, size=16)
@@ -269,7 +270,7 @@ def main() -> int:
             if ecosystem == "pypi":
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
-                    rows.append([name, current_version, None, None, None, None, None])
+                    rows.append([name, current_version, None, None, None, None, None, None])
                     continue
 
                 info = data.get("info", {})
@@ -285,7 +286,7 @@ def main() -> int:
             else:
                 data = fetch_npm(name, session, npm_cache)
                 if not data:
-                    rows.append([name, current_version, None, None, None, None, None])
+                    rows.append([name, current_version, None, None, None, None, None, None])
                     continue
 
                 time_map = data.get("time", {})
@@ -300,6 +301,9 @@ def main() -> int:
             days_since_latest = None
             if latest_date:
                 days_since_latest = (today - latest_date).days
+            days_since_current = None
+            if current_date:
+                days_since_current = (today - current_date).days
 
             rows.append(
                 [
@@ -310,17 +314,24 @@ def main() -> int:
                     latest_date if latest_date else None,
                     days_diff,
                     days_since_latest,
+                    days_since_current,
                 ]
             )
         rows.sort(
-            key=lambda r: (r[5] is None, r[5] if r[5] is not None else -1),
+            key=lambda r: (r[7] is None, r[7] if r[7] is not None else -1),
             reverse=True,
         )
         for row in rows:
             ws.append(row)
         for row in range(2, ws.max_row + 1):
-            days_value = ws.cell(row=row, column=6).value
-            if isinstance(days_value, int) and days_value > alert_threshold_days:
+            days_value = ws.cell(row=row, column=8).value
+            diff_value = ws.cell(row=row, column=6).value
+            if (
+                isinstance(days_value, int)
+                and days_value > alert_threshold_days
+                and isinstance(diff_value, int)
+                and diff_value > 0
+            ):
                 fill = alert_fill
             else:
                 fill = even_fill if row % 2 == 0 else odd_fill
