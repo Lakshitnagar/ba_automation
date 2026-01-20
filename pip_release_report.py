@@ -244,6 +244,7 @@ def main() -> int:
     ]
     summary_sections = ("sources", "tipcms", "collection")
     flagged_by_section: dict[str, list[list]] = {}
+    zero_diff_by_section: dict[str, list[list]] = {}
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True, size=16)
     header_alignment = Alignment(horizontal="center", vertical="center")
@@ -336,6 +337,14 @@ def main() -> int:
             ws.append(row)
             if is_alert and folder in summary_sections:
                 flagged_by_section.setdefault(folder, []).append(row)
+            if (
+                folder in summary_sections
+                and isinstance(row[5], int)
+                and row[5] == 0
+                and isinstance(row[6], int)
+                and row[6] > alert_threshold_days
+            ):
+                zero_diff_by_section.setdefault(folder, []).append(row)
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -369,7 +378,7 @@ def main() -> int:
             ws.column_dimensions[chr(64 + col)].width = width
 
     summary_headers = ["section", *headers]
-    summary_ws = wb.create_sheet(title="Upgradations")
+    summary_ws = wb.create_sheet(title="Upgradation")
     summary_ws.append(summary_headers)
     for col in range(1, len(summary_headers) + 1):
         cell = summary_ws.cell(row=1, column=col)
@@ -403,7 +412,47 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         summary_ws.column_dimensions[chr(64 + col)].width = width
 
-    desired_order = ["tipcms", "sources", "collection", "Upgradations"]
+    zero_ws = wb.create_sheet(title="Extend End Date")
+    zero_ws.append(summary_headers)
+    for col in range(1, len(summary_headers) + 1):
+        cell = zero_ws.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    for section in summary_sections:
+        for row in zero_diff_by_section.get(section, []):
+            zero_ws.append([section, *row])
+
+    for row in range(2, zero_ws.max_row + 1):
+        for col in range(1, len(summary_headers) + 1):
+            cell = zero_ws.cell(row=row, column=col)
+            cell.fill = alert_fill
+            cell.font = body_font
+            cell.alignment = package_alignment if col == 2 else body_alignment
+            if col in (4, 6) and cell.value:
+                cell.number_format = "DD-MMM-YYYY"
+            if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                cell.fill = warning_fill
+
+    for col in range(1, len(summary_headers) + 1):
+        max_len = 0
+        for row in range(1, zero_ws.max_row + 1):
+            value = zero_ws.cell(row=row, column=col).value
+            if value is None:
+                continue
+            max_len = max(max_len, len(str(value)))
+        header_len = len(str(summary_headers[col - 1]))
+        width = max(max_len + 2, int(header_len * 1.25) + 4)
+        zero_ws.column_dimensions[chr(64 + col)].width = width
+
+    desired_order = [
+        "tipcms",
+        "sources",
+        "collection",
+        "Upgradation",
+        "Extend End Date",
+    ]
     name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
     wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
     wb._sheets.extend(
