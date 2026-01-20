@@ -425,15 +425,19 @@ def main() -> int:
             zero_ws.append([section, *row])
 
     for row in range(2, zero_ws.max_row + 1):
+        days_latest = zero_ws.cell(row=row, column=8).value
+        row_fill = (
+            warning_fill
+            if isinstance(days_latest, int) and days_latest > alert_threshold_days
+            else alert_fill
+        )
         for col in range(1, len(summary_headers) + 1):
             cell = zero_ws.cell(row=row, column=col)
-            cell.fill = alert_fill
+            cell.fill = row_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
             if col in (4, 6) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
-            if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
-                cell.fill = warning_fill
 
     for col in range(1, len(summary_headers) + 1):
         max_len = 0
