@@ -369,7 +369,7 @@ def main() -> int:
             ws.column_dimensions[chr(64 + col)].width = width
 
     summary_headers = ["section", *headers]
-    summary_ws = wb.create_sheet(title="Summary")
+    summary_ws = wb.create_sheet(title="Upgradations")
     summary_ws.append(summary_headers)
     for col in range(1, len(summary_headers) + 1):
         cell = summary_ws.cell(row=1, column=col)
@@ -403,7 +403,7 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         summary_ws.column_dimensions[chr(64 + col)].width = width
 
-    desired_order = ["tipcms", "sources", "collection", "Summary"]
+    desired_order = ["tipcms", "sources", "collection", "Upgradations"]
     name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
     wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
     wb._sheets.extend(
