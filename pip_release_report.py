@@ -403,7 +403,7 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         summary_ws.column_dimensions[chr(64 + col)].width = width
 
-    desired_order = ["Summary", "tipcms", "sources", "collection"]
+    desired_order = ["tipcms", "sources", "collection", "Summary"]
     name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
     wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
     wb._sheets.extend(
