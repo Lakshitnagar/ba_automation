@@ -386,9 +386,16 @@ def main() -> int:
         cell.font = header_font
         cell.alignment = header_alignment
 
+    summary_rows: list[list] = []
     for section in summary_sections:
         for row in flagged_by_section.get(section, []):
-            summary_ws.append([section, *row])
+            summary_rows.append([section, *row])
+    summary_rows.sort(
+        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
+        reverse=True,
+    )
+    for row in summary_rows:
+        summary_ws.append(row)
 
     for row in range(2, summary_ws.max_row + 1):
         for col in range(1, len(summary_headers) + 1):
@@ -420,9 +427,16 @@ def main() -> int:
         cell.font = header_font
         cell.alignment = header_alignment
 
+    zero_rows: list[list] = []
     for section in summary_sections:
         for row in zero_diff_by_section.get(section, []):
-            zero_ws.append([section, *row])
+            zero_rows.append([section, *row])
+    zero_rows.sort(
+        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
+        reverse=True,
+    )
+    for row in zero_rows:
+        zero_ws.append(row)
 
     for row in range(2, zero_ws.max_row + 1):
         days_latest = zero_ws.cell(row=row, column=8).value
