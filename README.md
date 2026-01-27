@@ -1,0 +1,1 @@
+python3 pip_release_report.py --root . --output pip_release_report.xlsx
