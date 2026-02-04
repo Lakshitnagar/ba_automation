@@ -429,8 +429,10 @@ def main() -> int:
         )
         for row, is_alert, ba_entries in rows_info:
             start_row = ws.max_row + 1
+            expanded_rows: list[list] = []
             if not ba_entries:
                 ws.append(row)
+                expanded_rows.append(row)
                 end_row = start_row
             else:
                 for ba_id, ba_meta in ba_entries:
@@ -440,6 +442,7 @@ def main() -> int:
                     row_with_ba[10] = ba_meta.get("end_date")
                     row_with_ba[11] = ba_meta.get("end_action")
                     ws.append(row_with_ba)
+                    expanded_rows.append(row_with_ba)
                 end_row = start_row + len(ba_entries) - 1
                 if end_row > start_row:
                     for col in range(1, len(headers) + 1):
@@ -452,14 +455,14 @@ def main() -> int:
                             end_column=col,
                         )
             if is_alert and folder in summary_sections:
-                flagged_by_section.setdefault(folder, []).append(row)
+                flagged_by_section.setdefault(folder, []).extend(expanded_rows)
             if (
                 folder in summary_sections
                 and row[5] == 0
                 and isinstance(row[6], int)
                 and row[6] > alert_threshold_days
             ):
-                zero_diff_by_section.setdefault(folder, []).append(row)
+                zero_diff_by_section.setdefault(folder, []).extend(expanded_rows)
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -533,6 +536,29 @@ def main() -> int:
         header_len = len(str(summary_headers[col - 1]))
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         summary_ws.column_dimensions[chr(64 + col)].width = width
+    if summary_ws.max_row > 2:
+        non_ba_last_col = len(summary_headers) - 4
+        start_row = 2
+        while start_row <= summary_ws.max_row:
+            end_row = start_row
+            while end_row + 1 <= summary_ws.max_row:
+                if all(
+                    summary_ws.cell(row=end_row + 1, column=col).value
+                    == summary_ws.cell(row=start_row, column=col).value
+                    for col in range(1, non_ba_last_col + 1)
+                ):
+                    end_row += 1
+                else:
+                    break
+            if end_row > start_row:
+                for col in range(1, non_ba_last_col + 1):
+                    summary_ws.merge_cells(
+                        start_row=start_row,
+                        start_column=col,
+                        end_row=end_row,
+                        end_column=col,
+                    )
+            start_row = end_row + 1
 
     zero_ws = wb.create_sheet(title="Extend End Date")
     zero_ws.append(summary_headers)
@@ -578,6 +604,29 @@ def main() -> int:
         header_len = len(str(summary_headers[col - 1]))
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         zero_ws.column_dimensions[chr(64 + col)].width = width
+    if zero_ws.max_row > 2:
+        non_ba_last_col = len(summary_headers) - 4
+        start_row = 2
+        while start_row <= zero_ws.max_row:
+            end_row = start_row
+            while end_row + 1 <= zero_ws.max_row:
+                if all(
+                    zero_ws.cell(row=end_row + 1, column=col).value
+                    == zero_ws.cell(row=start_row, column=col).value
+                    for col in range(1, non_ba_last_col + 1)
+                ):
+                    end_row += 1
+                else:
+                    break
+            if end_row > start_row:
+                for col in range(1, non_ba_last_col + 1):
+                    zero_ws.merge_cells(
+                        start_row=start_row,
+                        start_column=col,
+                        end_row=end_row,
+                        end_column=col,
+                    )
+            start_row = end_row + 1
 
     desired_order = [
         "tipcms",
