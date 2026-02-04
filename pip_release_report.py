@@ -635,7 +635,7 @@ def main() -> int:
                 if 0 <= days_until_end <= 90:
                     summary_ws.cell(row=row, column=13).fill = alert_fill
 
-    zero_ws = wb.create_sheet(title="Extend End Date")
+    zero_ws = wb.create_sheet(title="Replace/Remove Libs")
     zero_ws.append(summary_headers)
     for col in range(1, len(summary_headers) + 1):
         cell = zero_ws.cell(row=1, column=col)
@@ -737,7 +737,7 @@ def main() -> int:
         "sources",
         "collection",
         "Upgradation",
-        "Extend End Date",
+        "Replace/Remove Libs",
     ]
     name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
     wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
