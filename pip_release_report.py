@@ -27,6 +27,9 @@ NPM_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
 NPM_URL = "https://registry.npmjs.org/{name}"
 BA_LIST_PATH = "ba_list.csv"
+BA_LINK_TEMPLATE = (
+    "https://pls.appoci.oraclecorp.com/PLS/faces/ThirdPartyHome?wid={ba_id}"
+)
 EXCLUDED_PACKAGES = {
     "colorlog",
     "django-extensions",
@@ -298,6 +301,7 @@ def main() -> int:
     zero_diff_by_section: dict[str, list[list]] = {}
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True, size=16)
+    link_font = Font(color="0563C1", underline="single")
     header_alignment = Alignment(horizontal="center", vertical="center")
     body_font = Font(size=14)
     body_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -472,6 +476,9 @@ def main() -> int:
                     row_with_ba[11] = ba_meta.get("end_date")
                     row_with_ba[12] = ba_meta.get("end_action")
                     ws.append(row_with_ba)
+                    ba_cell = ws.cell(row=ws.max_row, column=9)
+                    ba_cell.hyperlink = BA_LINK_TEMPLATE.format(ba_id=ba_id)
+                    ba_cell.font = link_font
                     expanded_rows.append(row_with_ba)
                 end_row = start_row + len(ba_entries) - 1
                 if end_row > start_row:
@@ -558,6 +565,11 @@ def main() -> int:
     )
     for row in summary_rows:
         summary_ws.append(row)
+        ba_id = summary_ws.cell(row=summary_ws.max_row, column=10).value
+        if ba_id:
+            ba_cell = summary_ws.cell(row=summary_ws.max_row, column=10)
+            ba_cell.hyperlink = BA_LINK_TEMPLATE.format(ba_id=ba_id)
+            ba_cell.font = link_font
 
     for row in range(2, summary_ws.max_row + 1):
         for col in range(1, len(summary_headers) + 1):
@@ -653,6 +665,11 @@ def main() -> int:
     )
     for row in zero_rows:
         zero_ws.append(row)
+        ba_id = zero_ws.cell(row=zero_ws.max_row, column=10).value
+        if ba_id:
+            ba_cell = zero_ws.cell(row=zero_ws.max_row, column=10)
+            ba_cell.hyperlink = BA_LINK_TEMPLATE.format(ba_id=ba_id)
+            ba_cell.font = link_font
 
     for row in range(2, zero_ws.max_row + 1):
         days_latest = zero_ws.cell(row=row, column=8).value
