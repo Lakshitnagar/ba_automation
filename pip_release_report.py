@@ -73,20 +73,31 @@ def extract_npm_version(spec: str) -> str | None:
     return match.group(1) if match else None
 
 
-def load_ba_map(path: Path) -> dict[tuple[str, str], set[str]]:
+def load_ba_map(path: Path) -> dict[tuple[str, str], dict[str, dt.date | str]]:
     if not path.exists():
         return {}
-    mapping: dict[tuple[str, str], set[str]] = {}
+    mapping: dict[tuple[str, str], dict[str, dt.date | str]] = {}
     with path.open(encoding="utf-8", errors="replace") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             name = (row.get("Licensed Item Name") or "").strip()
             version = (row.get("Licensed Item Version") or "").strip()
             ba_id = (row.get("Business Approval ID") or "").strip()
+            created = (row.get("Created Date") or "").strip()
             if not name or not version or not ba_id:
                 continue
+            created_value: dt.date | str | None
+            if created:
+                try:
+                    created_value = dt.date.fromisoformat(created)
+                except ValueError:
+                    created_value = created
+            else:
+                created_value = None
             key = (name.lower(), version)
-            mapping.setdefault(key, set()).add(ba_id)
+            mapping.setdefault(key, {})
+            if ba_id not in mapping[key]:
+                mapping[key][ba_id] = created_value
     return mapping
 
 
@@ -256,13 +267,14 @@ def main() -> int:
     headers = [
         "package",
         "current_version",
-        "business_approval_ids",
         "current_release_date",
         "latest_version",
         "latest_release_date",
         "days_difference",
         "days_since_latest_release",
         "days_since_current_release",
+        "business_approval_ids",
+        "business_approval_created_date",
     ]
     summary_sections = ("sources", "tipcms", "collection")
     flagged_by_section: dict[str, list[list]] = {}
@@ -288,7 +300,7 @@ def main() -> int:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = header_alignment
-        rows_info: list[tuple[list, bool, list[str]]] = []
+        rows_info: list[tuple[list, bool, list[tuple[str, dt.date | str | None]]]] = []
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
@@ -296,7 +308,10 @@ def main() -> int:
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
                     rows_info.append(
-                        ([name, current_version, None, None, None, None, None, None, None], False)
+                        (
+                            [name, current_version, None, None, None, None, None, None, None, None],
+                            False,
+                        )
                     )
                     continue
 
@@ -315,7 +330,10 @@ def main() -> int:
                 data = fetch_npm(name, session, npm_cache)
                 if not data:
                     rows_info.append(
-                        ([name, current_version, None, None, None, None, None, None, None], False)
+                        (
+                            [name, current_version, None, None, None, None, None, None, None, None],
+                            False,
+                        )
                     )
                     continue
 
@@ -326,11 +344,11 @@ def main() -> int:
                 latest_date = get_npm_release_date(time_map, latest_version)
                 ba_version = current_resolved
 
-            ba_ids_list: list[str] = []
+            ba_entries: list[tuple[str, dt.date | str | None]] = []
             if ba_version:
-                ba_ids_set = ba_map.get((name.lower(), ba_version))
-                if ba_ids_set:
-                    ba_ids_list = sorted(ba_ids_set)
+                ba_ids_map = ba_map.get((name.lower(), ba_version))
+                if ba_ids_map:
+                    ba_entries = sorted(ba_ids_map.items(), key=lambda item: item[0])
 
             days_diff = None
             if current_date and latest_date:
@@ -345,13 +363,14 @@ def main() -> int:
             row = [
                 name,
                 current_version,
-                None,
                 current_date if current_date else None,
                 latest_version,
                 latest_date if latest_date else None,
                 days_diff,
                 days_since_latest,
                 days_since_current,
+                None,
+                None,
             ]
             is_alert = (
                 isinstance(days_since_current, int)
@@ -359,25 +378,26 @@ def main() -> int:
                 and isinstance(days_diff, int)
                 and days_diff > 0
             )
-            rows_info.append((row, is_alert, ba_ids_list))
+            rows_info.append((row, is_alert, ba_entries))
         rows_info.sort(
-            key=lambda r: (r[0][8] is None, r[0][8] if r[0][8] is not None else -1),
+            key=lambda r: (r[0][7] is None, r[0][7] if r[0][7] is not None else -1),
             reverse=True,
         )
-        for row, is_alert, ba_ids_list in rows_info:
+        for row, is_alert, ba_entries in rows_info:
             start_row = ws.max_row + 1
-            if not ba_ids_list:
+            if not ba_entries:
                 ws.append(row)
                 end_row = start_row
             else:
-                for ba_id in ba_ids_list:
+                for ba_id, ba_created in ba_entries:
                     row_with_ba = row.copy()
-                    row_with_ba[2] = ba_id
+                    row_with_ba[8] = ba_id
+                    row_with_ba[9] = ba_created
                     ws.append(row_with_ba)
-                end_row = start_row + len(ba_ids_list) - 1
+                end_row = start_row + len(ba_entries) - 1
                 if end_row > start_row:
                     for col in range(1, len(headers) + 1):
-                        if col == 3:
+                        if col in (9, 10):
                             continue
                         ws.merge_cells(
                             start_row=start_row,
@@ -389,15 +409,14 @@ def main() -> int:
                 flagged_by_section.setdefault(folder, []).append(row)
             if (
                 folder in summary_sections
+                and row[5] == 0
                 and isinstance(row[6], int)
-                and row[6] == 0
-                and isinstance(row[7], int)
-                and row[7] > alert_threshold_days
+                and row[6] > alert_threshold_days
             ):
                 zero_diff_by_section.setdefault(folder, []).append(row)
         for row in range(2, ws.max_row + 1):
-            days_value = ws.cell(row=row, column=9).value
-            diff_value = ws.cell(row=row, column=7).value
+            days_value = ws.cell(row=row, column=8).value
+            diff_value = ws.cell(row=row, column=6).value
             if (
                 isinstance(days_value, int)
                 and days_value > alert_threshold_days
@@ -412,9 +431,9 @@ def main() -> int:
                 cell.fill = fill
                 cell.font = body_font
                 cell.alignment = package_alignment if col == 1 else body_alignment
-                if col in (4, 6) and cell.value:
+                if col in (3, 5, 10) and cell.value:
                     cell.number_format = "DD-MMM-YYYY"
-                if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                     cell.fill = warning_fill
         for col in range(1, len(headers) + 1):
             max_len = 0
@@ -441,7 +460,7 @@ def main() -> int:
         for row in flagged_by_section.get(section, []):
             summary_rows.append([section, *row])
     summary_rows.sort(
-        key=lambda r: (r[9] is None, r[9] if r[9] is not None else -1),
+        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
         reverse=True,
     )
     for row in summary_rows:
@@ -453,9 +472,9 @@ def main() -> int:
             cell.fill = alert_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (5, 7) and cell.value:
+            if col in (4, 6, 11) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
-            if col == 9 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+            if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                 cell.fill = warning_fill
 
     for col in range(1, len(summary_headers) + 1):
@@ -482,14 +501,14 @@ def main() -> int:
         for row in zero_diff_by_section.get(section, []):
             zero_rows.append([section, *row])
     zero_rows.sort(
-        key=lambda r: (r[9] is None, r[9] if r[9] is not None else -1),
+        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
         reverse=True,
     )
     for row in zero_rows:
         zero_ws.append(row)
 
     for row in range(2, zero_ws.max_row + 1):
-        days_latest = zero_ws.cell(row=row, column=9).value
+        days_latest = zero_ws.cell(row=row, column=8).value
         row_fill = (
             warning_fill
             if isinstance(days_latest, int) and days_latest > alert_threshold_days
@@ -500,7 +519,7 @@ def main() -> int:
             cell.fill = row_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (5, 7) and cell.value:
+            if col in (4, 6, 11) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
 
     for col in range(1, len(summary_headers) + 1):
