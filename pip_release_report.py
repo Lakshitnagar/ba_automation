@@ -271,7 +271,7 @@ def main() -> int:
     header_font = Font(color="FFFFFF", bold=True, size=16)
     header_alignment = Alignment(horizontal="center", vertical="center")
     body_font = Font(size=14)
-    body_alignment = Alignment(horizontal="center", vertical="center")
+    body_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     package_alignment = Alignment(horizontal="left", vertical="center")
     even_fill = PatternFill("solid", fgColor="F2F6FA")
     odd_fill = PatternFill("solid", fgColor="FFFFFF")
@@ -288,7 +288,7 @@ def main() -> int:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = header_alignment
-        rows_info: list[tuple[list, bool]] = []
+        rows_info: list[tuple[list, bool, list[str]]] = []
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
@@ -326,11 +326,11 @@ def main() -> int:
                 latest_date = get_npm_release_date(time_map, latest_version)
                 ba_version = current_resolved
 
-            ba_ids = None
+            ba_ids_list: list[str] = []
             if ba_version:
                 ba_ids_set = ba_map.get((name.lower(), ba_version))
                 if ba_ids_set:
-                    ba_ids = ", ".join(sorted(ba_ids_set))
+                    ba_ids_list = sorted(ba_ids_set)
 
             days_diff = None
             if current_date and latest_date:
@@ -345,7 +345,7 @@ def main() -> int:
             row = [
                 name,
                 current_version,
-                ba_ids,
+                None,
                 current_date if current_date else None,
                 latest_version,
                 latest_date if latest_date else None,
@@ -359,13 +359,32 @@ def main() -> int:
                 and isinstance(days_diff, int)
                 and days_diff > 0
             )
-            rows_info.append((row, is_alert))
+            rows_info.append((row, is_alert, ba_ids_list))
         rows_info.sort(
             key=lambda r: (r[0][8] is None, r[0][8] if r[0][8] is not None else -1),
             reverse=True,
         )
-        for row, is_alert in rows_info:
-            ws.append(row)
+        for row, is_alert, ba_ids_list in rows_info:
+            start_row = ws.max_row + 1
+            if not ba_ids_list:
+                ws.append(row)
+                end_row = start_row
+            else:
+                for ba_id in ba_ids_list:
+                    row_with_ba = row.copy()
+                    row_with_ba[2] = ba_id
+                    ws.append(row_with_ba)
+                end_row = start_row + len(ba_ids_list) - 1
+                if end_row > start_row:
+                    for col in range(1, len(headers) + 1):
+                        if col == 3:
+                            continue
+                        ws.merge_cells(
+                            start_row=start_row,
+                            start_column=col,
+                            end_row=end_row,
+                            end_column=col,
+                        )
             if is_alert and folder in summary_sections:
                 flagged_by_section.setdefault(folder, []).append(row)
             if (
