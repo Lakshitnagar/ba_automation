@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import datetime as dt
 import json
 import re
@@ -25,6 +26,7 @@ LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)")
 NPM_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
 NPM_URL = "https://registry.npmjs.org/{name}"
+BA_LIST_PATH = "ba_list.csv"
 EXCLUDED_PACKAGES = {
     "colorlog",
     "django-extensions",
@@ -69,6 +71,23 @@ def parse_package_json(path: Path) -> list[tuple[str, str]]:
 def extract_npm_version(spec: str) -> str | None:
     match = NPM_VERSION_RE.search(spec)
     return match.group(1) if match else None
+
+
+def load_ba_map(path: Path) -> dict[tuple[str, str], set[str]]:
+    if not path.exists():
+        return {}
+    mapping: dict[tuple[str, str], set[str]] = {}
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            name = (row.get("Licensed Item Name") or "").strip()
+            version = (row.get("Licensed Item Version") or "").strip()
+            ba_id = (row.get("Business Approval ID") or "").strip()
+            if not name or not version or not ba_id:
+                continue
+            key = (name.lower(), version)
+            mapping.setdefault(key, set()).add(ba_id)
+    return mapping
 
 
 def get_release_date(releases: dict, version: str) -> dt.date | None:
@@ -224,6 +243,8 @@ def main() -> int:
         grouped.setdefault(folder, [])
         grouped[folder].extend((name, version, "npm") for name, version in parse_package_json(path))
 
+    ba_map = load_ba_map(root / BA_LIST_PATH)
+
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -235,6 +256,7 @@ def main() -> int:
     headers = [
         "package",
         "current_version",
+        "business_approval_ids",
         "current_release_date",
         "latest_version",
         "latest_release_date",
@@ -255,7 +277,7 @@ def main() -> int:
     odd_fill = PatternFill("solid", fgColor="FFFFFF")
     alert_fill = PatternFill("solid", fgColor="F8D7DA")
     warning_fill = PatternFill("solid", fgColor="FFF3CD")
-    alert_threshold_days = 2 * 365 - 62
+    alert_threshold_days = 2 * 365 - 2 * 31  # ~2 years minus ~2 months
 
     today = dt.date.today()
     for folder, items in sorted(grouped.items()):
@@ -274,7 +296,7 @@ def main() -> int:
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
                     rows_info.append(
-                        ([name, current_version, None, None, None, None, None, None], False)
+                        ([name, current_version, None, None, None, None, None, None, None], False)
                     )
                     continue
 
@@ -288,11 +310,12 @@ def main() -> int:
                 else:
                     latest_version = get_latest_version(info, releases)
                 latest_date = get_release_date(releases, latest_version) if latest_version else None
+                ba_version = current_version
             else:
                 data = fetch_npm(name, session, npm_cache)
                 if not data:
                     rows_info.append(
-                        ([name, current_version, None, None, None, None, None, None], False)
+                        ([name, current_version, None, None, None, None, None, None, None], False)
                     )
                     continue
 
@@ -301,6 +324,13 @@ def main() -> int:
                 current_date = get_npm_release_date(time_map, current_resolved)
                 latest_version = get_npm_latest_version(data)
                 latest_date = get_npm_release_date(time_map, latest_version)
+                ba_version = current_resolved
+
+            ba_ids = None
+            if ba_version:
+                ba_ids_set = ba_map.get((name.lower(), ba_version))
+                if ba_ids_set:
+                    ba_ids = ", ".join(sorted(ba_ids_set))
 
             days_diff = None
             if current_date and latest_date:
@@ -315,6 +345,7 @@ def main() -> int:
             row = [
                 name,
                 current_version,
+                ba_ids,
                 current_date if current_date else None,
                 latest_version,
                 latest_date if latest_date else None,
@@ -330,7 +361,7 @@ def main() -> int:
             )
             rows_info.append((row, is_alert))
         rows_info.sort(
-            key=lambda r: (r[0][7] is None, r[0][7] if r[0][7] is not None else -1),
+            key=lambda r: (r[0][8] is None, r[0][8] if r[0][8] is not None else -1),
             reverse=True,
         )
         for row, is_alert in rows_info:
@@ -339,15 +370,15 @@ def main() -> int:
                 flagged_by_section.setdefault(folder, []).append(row)
             if (
                 folder in summary_sections
-                and isinstance(row[5], int)
-                and row[5] == 0
                 and isinstance(row[6], int)
-                and row[6] > alert_threshold_days
+                and row[6] == 0
+                and isinstance(row[7], int)
+                and row[7] > alert_threshold_days
             ):
                 zero_diff_by_section.setdefault(folder, []).append(row)
         for row in range(2, ws.max_row + 1):
-            days_value = ws.cell(row=row, column=8).value
-            diff_value = ws.cell(row=row, column=6).value
+            days_value = ws.cell(row=row, column=9).value
+            diff_value = ws.cell(row=row, column=7).value
             if (
                 isinstance(days_value, int)
                 and days_value > alert_threshold_days
@@ -362,9 +393,9 @@ def main() -> int:
                 cell.fill = fill
                 cell.font = body_font
                 cell.alignment = package_alignment if col == 1 else body_alignment
-                if col in (3, 5) and cell.value:
+                if col in (4, 6) and cell.value:
                     cell.number_format = "DD-MMM-YYYY"
-                if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+                if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                     cell.fill = warning_fill
         for col in range(1, len(headers) + 1):
             max_len = 0
@@ -391,7 +422,7 @@ def main() -> int:
         for row in flagged_by_section.get(section, []):
             summary_rows.append([section, *row])
     summary_rows.sort(
-        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
+        key=lambda r: (r[9] is None, r[9] if r[9] is not None else -1),
         reverse=True,
     )
     for row in summary_rows:
@@ -403,9 +434,9 @@ def main() -> int:
             cell.fill = alert_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (4, 6) and cell.value:
+            if col in (5, 7) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
-            if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
+            if col == 9 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                 cell.fill = warning_fill
 
     for col in range(1, len(summary_headers) + 1):
@@ -432,14 +463,14 @@ def main() -> int:
         for row in zero_diff_by_section.get(section, []):
             zero_rows.append([section, *row])
     zero_rows.sort(
-        key=lambda r: (r[8] is None, r[8] if r[8] is not None else -1),
+        key=lambda r: (r[9] is None, r[9] if r[9] is not None else -1),
         reverse=True,
     )
     for row in zero_rows:
         zero_ws.append(row)
 
     for row in range(2, zero_ws.max_row + 1):
-        days_latest = zero_ws.cell(row=row, column=8).value
+        days_latest = zero_ws.cell(row=row, column=9).value
         row_fill = (
             warning_fill
             if isinstance(days_latest, int) and days_latest > alert_threshold_days
@@ -450,7 +481,7 @@ def main() -> int:
             cell.fill = row_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (4, 6) and cell.value:
+            if col in (5, 7) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
 
     for col in range(1, len(summary_headers) + 1):
