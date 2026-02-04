@@ -306,6 +306,8 @@ def main() -> int:
     odd_fill = PatternFill("solid", fgColor="FFFFFF")
     alert_fill = PatternFill("solid", fgColor="F8D7DA")
     warning_fill = PatternFill("solid", fgColor="FFF3CD")
+    ba_ok_fill = PatternFill("solid", fgColor="D4EDDA")
+    ba_bad_fill = PatternFill("solid", fgColor="F8D7DA")
     alert_threshold_days = 2 * 365 - 2 * 31  # ~2 years minus ~2 months
 
     today = dt.date.today()
@@ -449,9 +451,14 @@ def main() -> int:
             key=lambda r: (r[0][7] is None, r[0][7] if r[0][7] is not None else -1),
             reverse=True,
         )
+        ba_blocks: list[tuple[int, int, PatternFill]] = []
         for row, is_alert, ba_entries in rows_info:
             start_row = ws.max_row + 1
             expanded_rows: list[list] = []
+            ba_fill = None
+            if ba_entries:
+                top_status = (ba_entries[0][1].get("status") or "").strip().lower()
+                ba_fill = ba_ok_fill if top_status == "approved" else ba_bad_fill
             if not ba_entries:
                 ws.append(row)
                 expanded_rows.append(row)
@@ -477,6 +484,8 @@ def main() -> int:
                             end_row=end_row,
                             end_column=col,
                         )
+            if ba_fill:
+                ba_blocks.append((start_row, start_row, ba_fill))
             if is_alert and folder in summary_sections:
                 flagged_by_section.setdefault(folder, []).extend(expanded_rows)
             if (
@@ -507,6 +516,18 @@ def main() -> int:
                     cell.number_format = "DD-MMM-YYYY"
                 if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                     cell.fill = warning_fill
+                if col in (9, 10, 11, 12, 13):
+                    if not ws.cell(row=row, column=9).value:
+                        cell.fill = ba_bad_fill
+                    else:
+                        for start_row, end_row, ba_fill in ba_blocks:
+                            if start_row <= row <= end_row:
+                                cell.fill = ba_fill
+                                break
+                if col == 12 and isinstance(cell.value, dt.date):
+                    days_until_end = (cell.value - today).days
+                    if 0 <= days_until_end <= 90:
+                        cell.fill = alert_fill
         for col in range(1, len(headers) + 1):
             max_len = 0
             for row in range(1, ws.max_row + 1):
@@ -582,6 +603,37 @@ def main() -> int:
                         end_column=col,
                     )
             start_row = end_row + 1
+    if summary_ws.max_row > 2:
+        non_ba_last_col = len(summary_headers) - 5
+        start_row = 2
+        while start_row <= summary_ws.max_row:
+            end_row = start_row
+            while end_row + 1 <= summary_ws.max_row:
+                if all(
+                    summary_ws.cell(row=end_row + 1, column=col).value
+                    == summary_ws.cell(row=start_row, column=col).value
+                    for col in range(1, non_ba_last_col + 1)
+                ):
+                    end_row += 1
+                else:
+                    break
+            ba_id_val = (summary_ws.cell(row=start_row, column=10).value or "").strip()
+            if ba_id_val:
+                status_val = (
+                    summary_ws.cell(row=start_row, column=11).value or ""
+                ).strip().lower()
+                ba_fill = ba_ok_fill if status_val == "approved" else ba_bad_fill
+            else:
+                ba_fill = ba_bad_fill
+            for col in range(10, 15):
+                summary_ws.cell(row=start_row, column=col).fill = ba_fill
+            start_row = end_row + 1
+        for row in range(2, summary_ws.max_row + 1):
+            end_date_val = summary_ws.cell(row=row, column=13).value
+            if isinstance(end_date_val, dt.date):
+                days_until_end = (end_date_val - today).days
+                if 0 <= days_until_end <= 90:
+                    summary_ws.cell(row=row, column=13).fill = alert_fill
 
     zero_ws = wb.create_sheet(title="Extend End Date")
     zero_ws.append(summary_headers)
@@ -650,6 +702,35 @@ def main() -> int:
                         end_column=col,
                     )
             start_row = end_row + 1
+    if zero_ws.max_row > 2:
+        non_ba_last_col = len(summary_headers) - 5
+        start_row = 2
+        while start_row <= zero_ws.max_row:
+            end_row = start_row
+            while end_row + 1 <= zero_ws.max_row:
+                if all(
+                    zero_ws.cell(row=end_row + 1, column=col).value
+                    == zero_ws.cell(row=start_row, column=col).value
+                    for col in range(1, non_ba_last_col + 1)
+                ):
+                    end_row += 1
+                else:
+                    break
+            ba_id_val = (zero_ws.cell(row=start_row, column=10).value or "").strip()
+            if ba_id_val:
+                status_val = (zero_ws.cell(row=start_row, column=11).value or "").strip().lower()
+                ba_fill = ba_ok_fill if status_val == "approved" else ba_bad_fill
+            else:
+                ba_fill = ba_bad_fill
+            for col in range(10, 15):
+                zero_ws.cell(row=start_row, column=col).fill = ba_fill
+            start_row = end_row + 1
+        for row in range(2, zero_ws.max_row + 1):
+            end_date_val = zero_ws.cell(row=row, column=13).value
+            if isinstance(end_date_val, dt.date):
+                days_until_end = (end_date_val - today).days
+                if 0 <= days_until_end <= 90:
+                    zero_ws.cell(row=row, column=13).fill = alert_fill
 
     desired_order = [
         "tipcms",
