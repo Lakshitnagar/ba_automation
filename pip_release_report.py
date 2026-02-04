@@ -395,7 +395,23 @@ def main() -> int:
             if ba_version:
                 ba_ids_map = ba_map.get((name.lower(), ba_version))
                 if ba_ids_map:
-                    ba_entries = sorted(ba_ids_map.items(), key=lambda item: item[0])
+                    def ba_sort_key(item: tuple[str, dict[str, dt.date | str | None]]):
+                        ba_id, meta = item
+                        end_date = meta.get("end_date")
+                        if isinstance(end_date, dt.date):
+                            key_date = end_date
+                        elif isinstance(end_date, str):
+                            try:
+                                key_date = dt.date.fromisoformat(end_date)
+                            except ValueError:
+                                key_date = None
+                        else:
+                            key_date = None
+                        status = (meta.get("status") or "").lower()
+                        status_priority = 1 if status == "approved" else 0
+                        return (key_date is None, key_date or dt.date.max, status_priority, ba_id)
+
+                    ba_entries = sorted(ba_ids_map.items(), key=ba_sort_key, reverse=True)
 
             days_diff = None
             if current_date and latest_date:
