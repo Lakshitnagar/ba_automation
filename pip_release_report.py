@@ -88,6 +88,7 @@ def load_ba_map(
             created = (row.get("Created Date") or "").strip()
             ba_end_date = (row.get("BA End Date") or "").strip()
             ba_end_action = (row.get("BA End Date Action") or "").strip()
+            ba_status = (row.get("Status") or "").strip()
             if not name or not version or not ba_id:
                 continue
             created_value: dt.date | str | None = None
@@ -109,6 +110,7 @@ def load_ba_map(
                     "created": created_value,
                     "end_date": end_date_value,
                     "end_action": ba_end_action or None,
+                    "status": ba_status or None,
                 }
     return mapping
 
@@ -286,6 +288,7 @@ def main() -> int:
         "days_since_latest_release",
         "days_since_current_release",
         "business_approval_ids",
+        "business_approval_status",
         "business_approval_created_date",
         "business_approval_end_date",
         "business_approval_end_date_action",
@@ -338,6 +341,7 @@ def main() -> int:
                                 None,
                                 None,
                                 None,
+                                None,
                             ],
                             False,
                         )
@@ -363,6 +367,7 @@ def main() -> int:
                             [
                                 name,
                                 current_version,
+                                None,
                                 None,
                                 None,
                                 None,
@@ -415,6 +420,7 @@ def main() -> int:
                 None,
                 None,
                 None,
+                None,
             ]
             is_alert = (
                 isinstance(days_since_current, int)
@@ -438,15 +444,16 @@ def main() -> int:
                 for ba_id, ba_meta in ba_entries:
                     row_with_ba = row.copy()
                     row_with_ba[8] = ba_id
-                    row_with_ba[9] = ba_meta.get("created")
-                    row_with_ba[10] = ba_meta.get("end_date")
-                    row_with_ba[11] = ba_meta.get("end_action")
+                    row_with_ba[9] = ba_meta.get("status")
+                    row_with_ba[10] = ba_meta.get("created")
+                    row_with_ba[11] = ba_meta.get("end_date")
+                    row_with_ba[12] = ba_meta.get("end_action")
                     ws.append(row_with_ba)
                     expanded_rows.append(row_with_ba)
                 end_row = start_row + len(ba_entries) - 1
                 if end_row > start_row:
                     for col in range(1, len(headers) + 1):
-                        if col in (9, 10, 11, 12):
+                        if col in (9, 10, 11, 12, 13):
                             continue
                         ws.merge_cells(
                             start_row=start_row,
@@ -480,7 +487,7 @@ def main() -> int:
                 cell.fill = fill
                 cell.font = body_font
                 cell.alignment = package_alignment if col == 1 else body_alignment
-                if col in (3, 5, 10, 11) and cell.value:
+                if col in (3, 5, 11, 12) and cell.value:
                     cell.number_format = "DD-MMM-YYYY"
                 if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                     cell.fill = warning_fill
@@ -537,7 +544,7 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         summary_ws.column_dimensions[chr(64 + col)].width = width
     if summary_ws.max_row > 2:
-        non_ba_last_col = len(summary_headers) - 4
+        non_ba_last_col = len(summary_headers) - 5
         start_row = 2
         while start_row <= summary_ws.max_row:
             end_row = start_row
@@ -605,7 +612,7 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         zero_ws.column_dimensions[chr(64 + col)].width = width
     if zero_ws.max_row > 2:
-        non_ba_last_col = len(summary_headers) - 4
+        non_ba_last_col = len(summary_headers) - 5
         start_row = 2
         while start_row <= zero_ws.max_row:
             end_row = start_row
