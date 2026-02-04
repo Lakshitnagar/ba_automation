@@ -73,10 +73,12 @@ def extract_npm_version(spec: str) -> str | None:
     return match.group(1) if match else None
 
 
-def load_ba_map(path: Path) -> dict[tuple[str, str], dict[str, dt.date | str]]:
+def load_ba_map(
+    path: Path,
+) -> dict[tuple[str, str], dict[str, dict[str, dt.date | str | None]]]:
     if not path.exists():
         return {}
-    mapping: dict[tuple[str, str], dict[str, dt.date | str]] = {}
+    mapping: dict[tuple[str, str], dict[str, dict[str, dt.date | str | None]]] = {}
     with path.open(encoding="utf-8", errors="replace") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
@@ -84,20 +86,30 @@ def load_ba_map(path: Path) -> dict[tuple[str, str], dict[str, dt.date | str]]:
             version = (row.get("Licensed Item Version") or "").strip()
             ba_id = (row.get("Business Approval ID") or "").strip()
             created = (row.get("Created Date") or "").strip()
+            ba_end_date = (row.get("BA End Date") or "").strip()
+            ba_end_action = (row.get("BA End Date Action") or "").strip()
             if not name or not version or not ba_id:
                 continue
-            created_value: dt.date | str | None
+            created_value: dt.date | str | None = None
             if created:
                 try:
                     created_value = dt.date.fromisoformat(created)
                 except ValueError:
                     created_value = created
-            else:
-                created_value = None
+            end_date_value: dt.date | str | None = None
+            if ba_end_date:
+                try:
+                    end_date_value = dt.date.fromisoformat(ba_end_date)
+                except ValueError:
+                    end_date_value = ba_end_date
             key = (name.lower(), version)
             mapping.setdefault(key, {})
             if ba_id not in mapping[key]:
-                mapping[key][ba_id] = created_value
+                mapping[key][ba_id] = {
+                    "created": created_value,
+                    "end_date": end_date_value,
+                    "end_action": ba_end_action or None,
+                }
     return mapping
 
 
@@ -275,6 +287,8 @@ def main() -> int:
         "days_since_current_release",
         "business_approval_ids",
         "business_approval_created_date",
+        "business_approval_end_date",
+        "business_approval_end_date_action",
     ]
     summary_sections = ("sources", "tipcms", "collection")
     flagged_by_section: dict[str, list[list]] = {}
@@ -300,7 +314,9 @@ def main() -> int:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = header_alignment
-        rows_info: list[tuple[list, bool, list[tuple[str, dt.date | str | None]]]] = []
+        rows_info: list[
+            tuple[list, bool, list[tuple[str, dict[str, dt.date | str | None]]]]
+        ] = []
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
@@ -309,7 +325,20 @@ def main() -> int:
                 if not data:
                     rows_info.append(
                         (
-                            [name, current_version, None, None, None, None, None, None, None, None],
+                            [
+                                name,
+                                current_version,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            ],
                             False,
                         )
                     )
@@ -331,7 +360,20 @@ def main() -> int:
                 if not data:
                     rows_info.append(
                         (
-                            [name, current_version, None, None, None, None, None, None, None, None],
+                            [
+                                name,
+                                current_version,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            ],
                             False,
                         )
                     )
@@ -344,7 +386,7 @@ def main() -> int:
                 latest_date = get_npm_release_date(time_map, latest_version)
                 ba_version = current_resolved
 
-            ba_entries: list[tuple[str, dt.date | str | None]] = []
+            ba_entries: list[tuple[str, dict[str, dt.date | str | None]]] = []
             if ba_version:
                 ba_ids_map = ba_map.get((name.lower(), ba_version))
                 if ba_ids_map:
@@ -371,6 +413,8 @@ def main() -> int:
                 days_since_current,
                 None,
                 None,
+                None,
+                None,
             ]
             is_alert = (
                 isinstance(days_since_current, int)
@@ -389,15 +433,17 @@ def main() -> int:
                 ws.append(row)
                 end_row = start_row
             else:
-                for ba_id, ba_created in ba_entries:
+                for ba_id, ba_meta in ba_entries:
                     row_with_ba = row.copy()
                     row_with_ba[8] = ba_id
-                    row_with_ba[9] = ba_created
+                    row_with_ba[9] = ba_meta.get("created")
+                    row_with_ba[10] = ba_meta.get("end_date")
+                    row_with_ba[11] = ba_meta.get("end_action")
                     ws.append(row_with_ba)
                 end_row = start_row + len(ba_entries) - 1
                 if end_row > start_row:
                     for col in range(1, len(headers) + 1):
-                        if col in (9, 10):
+                        if col in (9, 10, 11, 12):
                             continue
                         ws.merge_cells(
                             start_row=start_row,
@@ -431,7 +477,7 @@ def main() -> int:
                 cell.fill = fill
                 cell.font = body_font
                 cell.alignment = package_alignment if col == 1 else body_alignment
-                if col in (3, 5, 10) and cell.value:
+                if col in (3, 5, 10, 11) and cell.value:
                     cell.number_format = "DD-MMM-YYYY"
                 if col == 7 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                     cell.fill = warning_fill
@@ -472,7 +518,7 @@ def main() -> int:
             cell.fill = alert_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (4, 6, 11) and cell.value:
+            if col in (4, 6, 11, 12) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
             if col == 8 and isinstance(cell.value, int) and cell.value > alert_threshold_days:
                 cell.fill = warning_fill
@@ -519,7 +565,7 @@ def main() -> int:
             cell.fill = row_fill
             cell.font = body_font
             cell.alignment = package_alignment if col == 2 else body_alignment
-            if col in (4, 6, 11) and cell.value:
+            if col in (4, 6, 11, 12) and cell.value:
                 cell.number_format = "DD-MMM-YYYY"
 
     for col in range(1, len(summary_headers) + 1):
