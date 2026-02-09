@@ -346,6 +346,7 @@ def main() -> int:
     summary_sections = ("sources", "tipcms", "collection", "etl")
     flagged_by_section: dict[str, list[list]] = {}
     zero_diff_by_section: dict[str, list[list]] = {}
+    missing_ba_rows: list[list] = []
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True, size=16)
     link_font = Font(color="0563C1", underline="single")
@@ -549,6 +550,10 @@ def main() -> int:
                 and row[6] > alert_threshold_days
             ):
                 zero_diff_by_section.setdefault(folder, []).extend(expanded_rows)
+            if not is_alert:
+                for expanded in expanded_rows:
+                    if not expanded[8]:
+                        missing_ba_rows.append([folder, *expanded])
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -796,6 +801,34 @@ def main() -> int:
                 if 0 <= days_until_end <= 90:
                     zero_ws.cell(row=row, column=13).fill = alert_fill
 
+    missing_ws = wb.create_sheet(title="Missing-NonApproved-BAs")
+    missing_ws.append(summary_headers)
+    for col in range(1, len(summary_headers) + 1):
+        cell = missing_ws.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+    for row in missing_ba_rows:
+        missing_ws.append(row)
+    for row in range(2, missing_ws.max_row + 1):
+        for col in range(1, len(summary_headers) + 1):
+            cell = missing_ws.cell(row=row, column=col)
+            cell.fill = ba_bad_fill if col >= 10 else even_fill if row % 2 == 0 else odd_fill
+            cell.font = body_font
+            cell.alignment = package_alignment if col == 2 else body_alignment
+            if col in (4, 6, 11, 12) and cell.value:
+                cell.number_format = "DD-MMM-YYYY"
+    for col in range(1, len(summary_headers) + 1):
+        max_len = 0
+        for row in range(1, missing_ws.max_row + 1):
+            value = missing_ws.cell(row=row, column=col).value
+            if value is None:
+                continue
+            max_len = max(max_len, len(str(value)))
+        header_len = len(str(summary_headers[col - 1]))
+        width = max(max_len + 2, int(header_len * 1.25) + 4)
+        missing_ws.column_dimensions[chr(64 + col)].width = width
+
     desired_order = [
         "tipcms",
         "sources",
@@ -803,6 +836,7 @@ def main() -> int:
         "etl",
         "Upgradation",
         "Replace-Remove Libs",
+        "Missing-NonApproved-BAs",
     ]
     all_sheets = list(wb.worksheets)
     name_to_sheet = {sheet.title: sheet for sheet in all_sheets}
