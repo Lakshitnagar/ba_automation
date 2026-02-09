@@ -1,0 +1,17 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+pyspark = "*"
+oci = "*"
+pandas = "*"
+cx-oracle = "*"
+boto3 = "*"
+psycopg2-binary = "*"
+
+[requires]
+python_version = "3.6.8"

@@ -24,6 +24,7 @@ except Exception as exc:  # pragma: no cover - best-effort import
 
 LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)")
 NPM_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
+PIPFILE_PACKAGE_RE = re.compile(r'^\s*([A-Za-z0-9_.-]+)\s*=\s*"(.*?)"\s*$')
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
 NPM_URL = "https://registry.npmjs.org/{name}"
 BA_LIST_PATH = "ba_list.csv"
@@ -68,6 +69,47 @@ def parse_package_json(path: Path) -> list[tuple[str, str]]:
         if name.startswith("@angular/"):
             continue
         items.append((name, spec))
+    return items
+
+
+def parse_pipfile(path: Path) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    in_packages = False
+    lock_versions: dict[str, str] = {}
+    lock_path = path.with_name("Pipfile.lock")
+    if lock_path.exists():
+        try:
+            lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+            default_section = lock_data.get("default", {})
+            if isinstance(default_section, dict):
+                for name, meta in default_section.items():
+                    if not isinstance(meta, dict):
+                        continue
+                    version = meta.get("version")
+                    if isinstance(version, str):
+                        lock_versions[name] = version.lstrip("=")
+        except (OSError, json.JSONDecodeError):
+            lock_versions = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_packages = line.lower() == "[packages]"
+            continue
+        if not in_packages:
+            continue
+        match = PIPFILE_PACKAGE_RE.match(line)
+        if not match:
+            continue
+        name, spec = match.group(1), match.group(2)
+        if not spec:
+            continue
+        spec = spec.lstrip("=")
+        if name in lock_versions:
+            items.append((name, lock_versions[name]))
+        else:
+            items.append((name, spec))
     return items
 
 
@@ -257,8 +299,9 @@ def main() -> int:
     root = Path(args.root).resolve()
     pip_files = list(root.rglob("*.pip"))
     npm_files = list(root.rglob("package.json"))
-    if not pip_files and not npm_files:
-        print(f"No .pip or package.json files found under {root}")
+    pipfile_files = list(root.rglob("Pipfile"))
+    if not pip_files and not npm_files and not pipfile_files:
+        print(f"No .pip, Pipfile, or package.json files found under {root}")
         return 1
 
     grouped: dict[str, list[tuple[str, str, str]]] = {}
@@ -270,6 +313,10 @@ def main() -> int:
         folder = path.parent.name or path.parent.as_posix()
         grouped.setdefault(folder, [])
         grouped[folder].extend((name, version, "npm") for name, version in parse_package_json(path))
+    for path in pipfile_files:
+        folder = path.parent.name or path.parent.as_posix()
+        grouped.setdefault(folder, [])
+        grouped[folder].extend((name, version, "pypi") for name, version in parse_pipfile(path))
 
     ba_map = load_ba_map(root / BA_LIST_PATH)
 
@@ -296,7 +343,7 @@ def main() -> int:
         "business_approval_end_date",
         "business_approval_end_date_action",
     ]
-    summary_sections = ("sources", "tipcms", "collection")
+    summary_sections = ("sources", "tipcms", "collection", "etl")
     flagged_by_section: dict[str, list[list]] = {}
     zero_diff_by_section: dict[str, list[list]] = {}
     header_fill = PatternFill("solid", fgColor="1F4E78")
@@ -753,14 +800,14 @@ def main() -> int:
         "tipcms",
         "sources",
         "collection",
+        "etl",
         "Upgradation",
         "Replace-Remove Libs",
     ]
-    name_to_sheet = {sheet.title: sheet for sheet in wb.worksheets}
+    all_sheets = list(wb.worksheets)
+    name_to_sheet = {sheet.title: sheet for sheet in all_sheets}
     wb._sheets = [name_to_sheet[name] for name in desired_order if name in name_to_sheet]
-    wb._sheets.extend(
-        sheet for sheet in wb.worksheets if sheet.title not in desired_order
-    )
+    wb._sheets.extend(sheet for sheet in all_sheets if sheet.title not in desired_order)
 
     wb.save(args.output)
     print(f"Wrote {args.output}")
