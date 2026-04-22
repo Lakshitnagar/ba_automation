@@ -851,6 +851,8 @@ def main() -> int:
     heading_cell = overview_ws.cell(row=1, column=1)
     heading_cell.font = Font(size=18, bold=True)
 
+    overview_ws.append([])
+
     overview_headers = [
         "Repos",
         "On Latest Version",
@@ -861,7 +863,7 @@ def main() -> int:
     ]
     overview_ws.append(overview_headers)
     for col in range(1, len(overview_headers) + 1):
-        cell = overview_ws.cell(row=2, column=col)
+        cell = overview_ws.cell(row=3, column=col)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = header_alignment
@@ -899,7 +901,7 @@ def main() -> int:
     pct_tot_str_mis = tot_str_mis / tot_pkgs if tot_pkgs > 0 else 0.0
     overview_ws.append(["Total", pct_tot_u, pct_tot_r, pct_tot_m, pct_tot_in_rev, pct_tot_str_mis])
 
-    for row_idx in range(3, overview_ws.max_row + 1):
+    for row_idx in range(4, overview_ws.max_row + 1):
         is_total = (row_idx == overview_ws.max_row)
         for col_idx in range(1, len(overview_headers) + 1):
             cell = overview_ws.cell(row=row_idx, column=col_idx)
@@ -913,7 +915,7 @@ def main() -> int:
 
     for col in range(1, len(overview_headers) + 1):
         max_len = 0
-        for row in range(2, overview_ws.max_row + 1):
+        for row in range(3, overview_ws.max_row + 1):
             val = overview_ws.cell(row=row, column=col).value
             if val is None:
                 continue
@@ -922,6 +924,13 @@ def main() -> int:
         header_len = len(str(overview_headers[col - 1]))
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         overview_ws.column_dimensions[chr(64 + col)].width = width
+
+    overview_ws.append([])
+    overview_ws.append(["Note:"])
+    note_cell = overview_ws.cell(row=overview_ws.max_row, column=1)
+    note_cell.font = Font(bold=True)
+    overview_ws.append(["1. Sufficiently Latest - Libs which are not older than 2 years."])
+    overview_ws.append(["2. Missing BAs might also mean that BA is raised but it is not captured while creating this excel data."])
 
     desired_order = [
         "Overview",
