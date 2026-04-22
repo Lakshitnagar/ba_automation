@@ -846,10 +846,10 @@ def main() -> int:
     heading_cell.font = Font(size=18, bold=True)
 
     overview_headers = [
-        "Section",
-        "Upgradation",
-        "Replace-Remove Libs",
-        "Missing-NonApproved-BAs",
+        "Repos",
+        "On Latest Version",
+        "Sufficiently Latest (< 2 Years)",
+        "Approved BAs",
     ]
     overview_ws.append(overview_headers)
     for col in range(1, len(overview_headers) + 1):
