@@ -367,6 +367,8 @@ def main() -> int:
     upgradation_count: dict[str, int] = {s: 0 for s in summary_sections}
     replace_remove_count: dict[str, int] = {s: 0 for s in summary_sections}
     missing_ba_count: dict[str, int] = {s: 0 for s in summary_sections}
+    in_review_ba_count: dict[str, int] = {s: 0 for s in summary_sections}
+    strictly_missing_ba_count: dict[str, int] = {s: 0 for s in summary_sections}
 
     for folder, items in sorted(grouped.items()):
         ws = wb.create_sheet(title=sanitize_sheet_name(folder))
@@ -565,6 +567,10 @@ def main() -> int:
                     missing_ba_rows.append([folder, *expanded_rows[0]])
             if package_missing_ba and folder in summary_sections:
                 missing_ba_count[folder] += 1
+                if not ba_entries:
+                    strictly_missing_ba_count[folder] += 1
+                else:
+                    in_review_ba_count[folder] += 1
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -850,6 +856,8 @@ def main() -> int:
         "On Latest Version",
         "Sufficiently Latest (< 2 Years)",
         "Approved BAs",
+        "In-Review BAs",
+        "Missing BAs",
     ]
     overview_ws.append(overview_headers)
     for col in range(1, len(overview_headers) + 1):
@@ -862,24 +870,34 @@ def main() -> int:
     tot_upg = 0
     tot_rep = 0
     tot_mis = 0
+    tot_in_rev = 0
+    tot_str_mis = 0
     for section in summary_sections:
         t = total_packages_count.get(section, 0)
         u = upgradation_count.get(section, 0)
         r = replace_remove_count.get(section, 0)
         m = missing_ba_count.get(section, 0)
+        in_rev = in_review_ba_count.get(section, 0)
+        str_mis = strictly_missing_ba_count.get(section, 0)
         tot_pkgs += t
         tot_upg += u
         tot_rep += r
         tot_mis += m
+        tot_in_rev += in_rev
+        tot_str_mis += str_mis
         pct_u = (t - u) / t if t > 0 else 1.0
         pct_r = (t - r) / t if t > 0 else 1.0
         pct_m = (t - m) / t if t > 0 else 1.0
-        overview_ws.append([section, pct_u, pct_r, pct_m])
+        pct_in_rev = in_rev / t if t > 0 else 0.0
+        pct_str_mis = str_mis / t if t > 0 else 0.0
+        overview_ws.append([section, pct_u, pct_r, pct_m, pct_in_rev, pct_str_mis])
 
     pct_tot_u = (tot_pkgs - tot_upg) / tot_pkgs if tot_pkgs > 0 else 1.0
     pct_tot_r = (tot_pkgs - tot_rep) / tot_pkgs if tot_pkgs > 0 else 1.0
     pct_tot_m = (tot_pkgs - tot_mis) / tot_pkgs if tot_pkgs > 0 else 1.0
-    overview_ws.append(["Total", pct_tot_u, pct_tot_r, pct_tot_m])
+    pct_tot_in_rev = tot_in_rev / tot_pkgs if tot_pkgs > 0 else 0.0
+    pct_tot_str_mis = tot_str_mis / tot_pkgs if tot_pkgs > 0 else 0.0
+    overview_ws.append(["Total", pct_tot_u, pct_tot_r, pct_tot_m, pct_tot_in_rev, pct_tot_str_mis])
 
     for row_idx in range(3, overview_ws.max_row + 1):
         is_total = (row_idx == overview_ws.max_row)
