@@ -382,8 +382,6 @@ def main() -> int:
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
-            if folder in summary_sections:
-                total_packages_count[folder] += 1
             if ecosystem == "pypi":
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
@@ -512,6 +510,8 @@ def main() -> int:
         )
         ba_blocks: list[tuple[int, int, PatternFill]] = []
         for row, is_alert, ba_entries in rows_info:
+            if folder in summary_sections:
+                total_packages_count[folder] += 1
             start_row = ws.max_row + 1
             expanded_rows: list[list] = []
             ba_fill = None
@@ -558,14 +558,13 @@ def main() -> int:
             ):
                 zero_diff_by_section.setdefault(folder, []).extend(expanded_rows)
                 replace_remove_count[folder] += 1
-            if not is_alert:
-                package_missing_ba = False
-                for expanded in expanded_rows:
-                    if not expanded[8]:
-                        missing_ba_rows.append([folder, *expanded])
-                        package_missing_ba = True
-                if package_missing_ba and folder in summary_sections:
-                    missing_ba_count[folder] += 1
+            package_missing_ba = False
+            if not ba_entries or (ba_entries[0][1].get("status") or "").strip().lower() != "approved":
+                package_missing_ba = True
+                if expanded_rows:
+                    missing_ba_rows.append([folder, *expanded_rows[0]])
+            if package_missing_ba and folder in summary_sections:
+                missing_ba_count[folder] += 1
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
