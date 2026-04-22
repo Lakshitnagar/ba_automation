@@ -27,7 +27,7 @@ NPM_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
 PIPFILE_PACKAGE_RE = re.compile(r'^\s*([A-Za-z0-9_.-]+)\s*=\s*"(.*?)"\s*$')
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
 NPM_URL = "https://registry.npmjs.org/{name}"
-BA_LIST_PATH = "ba_list.csv"
+BA_LIST_PATH = "ba_list_21_04_2026.csv"
 BA_LINK_TEMPLATE = (
     "https://pls.appoci.oraclecorp.com/PLS/faces/ThirdPartyHome?wid={ba_id}"
 )
@@ -363,6 +363,11 @@ def main() -> int:
     alert_threshold_days = 2 * 365 - 3 * 31  # ~2 years minus ~3 months
 
     today = dt.date.today()
+    total_packages_count: dict[str, int] = {s: 0 for s in summary_sections}
+    upgradation_count: dict[str, int] = {s: 0 for s in summary_sections}
+    replace_remove_count: dict[str, int] = {s: 0 for s in summary_sections}
+    missing_ba_count: dict[str, int] = {s: 0 for s in summary_sections}
+
     for folder, items in sorted(grouped.items()):
         ws = wb.create_sheet(title=sanitize_sheet_name(folder))
         ws.append(headers)
@@ -377,6 +382,8 @@ def main() -> int:
         for name, current_version, ecosystem in items:
             if name.lower() in EXCLUDED_PACKAGES:
                 continue
+            if folder in summary_sections:
+                total_packages_count[folder] += 1
             if ecosystem == "pypi":
                 data = fetch_pypi(name, session, pypi_cache)
                 if not data:
@@ -543,6 +550,7 @@ def main() -> int:
                 ba_blocks.append((start_row, start_row, ba_fill))
             if is_alert and folder in summary_sections:
                 flagged_by_section.setdefault(folder, []).extend(expanded_rows)
+                upgradation_count[folder] += 1
             if (
                 folder in summary_sections
                 and row[5] == 0
@@ -550,10 +558,15 @@ def main() -> int:
                 and row[6] > alert_threshold_days
             ):
                 zero_diff_by_section.setdefault(folder, []).extend(expanded_rows)
+                replace_remove_count[folder] += 1
             if not is_alert:
+                package_missing_ba = False
                 for expanded in expanded_rows:
                     if not expanded[8]:
                         missing_ba_rows.append([folder, *expanded])
+                        package_missing_ba = True
+                if package_missing_ba and folder in summary_sections:
+                    missing_ba_count[folder] += 1
         for row in range(2, ws.max_row + 1):
             days_value = ws.cell(row=row, column=8).value
             diff_value = ws.cell(row=row, column=6).value
@@ -829,7 +842,73 @@ def main() -> int:
         width = max(max_len + 2, int(header_len * 1.25) + 4)
         missing_ws.column_dimensions[chr(64 + col)].width = width
 
+    overview_ws = wb.create_sheet(title="Overview")
+    overview_ws.append(["Percentage Completions"])
+    heading_cell = overview_ws.cell(row=1, column=1)
+    heading_cell.font = Font(size=18, bold=True)
+
+    overview_headers = [
+        "Section",
+        "Upgradation",
+        "Replace-Remove Libs",
+        "Missing-NonApproved-BAs",
+    ]
+    overview_ws.append(overview_headers)
+    for col in range(1, len(overview_headers) + 1):
+        cell = overview_ws.cell(row=2, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    tot_pkgs = 0
+    tot_upg = 0
+    tot_rep = 0
+    tot_mis = 0
+    for section in summary_sections:
+        t = total_packages_count.get(section, 0)
+        u = upgradation_count.get(section, 0)
+        r = replace_remove_count.get(section, 0)
+        m = missing_ba_count.get(section, 0)
+        tot_pkgs += t
+        tot_upg += u
+        tot_rep += r
+        tot_mis += m
+        pct_u = (t - u) / t if t > 0 else 1.0
+        pct_r = (t - r) / t if t > 0 else 1.0
+        pct_m = (t - m) / t if t > 0 else 1.0
+        overview_ws.append([section, pct_u, pct_r, pct_m])
+
+    pct_tot_u = (tot_pkgs - tot_upg) / tot_pkgs if tot_pkgs > 0 else 1.0
+    pct_tot_r = (tot_pkgs - tot_rep) / tot_pkgs if tot_pkgs > 0 else 1.0
+    pct_tot_m = (tot_pkgs - tot_mis) / tot_pkgs if tot_pkgs > 0 else 1.0
+    overview_ws.append(["Total", pct_tot_u, pct_tot_r, pct_tot_m])
+
+    for row_idx in range(3, overview_ws.max_row + 1):
+        is_total = (row_idx == overview_ws.max_row)
+        for col_idx in range(1, len(overview_headers) + 1):
+            cell = overview_ws.cell(row=row_idx, column=col_idx)
+            cell.font = Font(size=14, bold=is_total)
+            if col_idx == 1:
+                cell.alignment = package_alignment
+            else:
+                cell.alignment = body_alignment
+                cell.number_format = "0.00%"
+            cell.fill = even_fill if row_idx % 2 == 0 else odd_fill
+
+    for col in range(1, len(overview_headers) + 1):
+        max_len = 0
+        for row in range(2, overview_ws.max_row + 1):
+            val = overview_ws.cell(row=row, column=col).value
+            if val is None:
+                continue
+            str_val = f"{val * 100:.2f}%" if isinstance(val, float) else str(val)
+            max_len = max(max_len, len(str_val))
+        header_len = len(str(overview_headers[col - 1]))
+        width = max(max_len + 2, int(header_len * 1.25) + 4)
+        overview_ws.column_dimensions[chr(64 + col)].width = width
+
     desired_order = [
+        "Overview",
         "tipcms",
         "sources",
         "collection",
