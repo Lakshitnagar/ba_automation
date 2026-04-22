@@ -553,7 +553,6 @@ def main() -> int:
                 upgradation_count[folder] += 1
             if (
                 folder in summary_sections
-                and row[5] == 0
                 and isinstance(row[6], int)
                 and row[6] > alert_threshold_days
             ):
