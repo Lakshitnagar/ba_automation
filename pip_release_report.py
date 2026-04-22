@@ -360,7 +360,7 @@ def main() -> int:
     warning_fill = PatternFill("solid", fgColor="FFF3CD")
     ba_ok_fill = PatternFill("solid", fgColor="D4EDDA")
     ba_bad_fill = PatternFill("solid", fgColor="F8D7DA")
-    alert_threshold_days = 2 * 365 - 2 * 31  # ~2 years minus ~2 months
+    alert_threshold_days = 2 * 365 - 3 * 31  # ~2 years minus ~3 months
 
     today = dt.date.today()
     for folder, items in sorted(grouped.items()):

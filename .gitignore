@@ -1,4 +1,6 @@
 */*.pip
 */*.json
 *.xlsx
-ba_list.csv
+*.csv
+*/.DS_Store
+.DS_Store
